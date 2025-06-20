@@ -826,13 +826,14 @@ func handleToolCallJSONRPC(connID string, req *jsonRPCRequest, toolSet *mcp.Tool
 			log.Printf("Received response body for tool '%s': %s", params.ToolName, string(bodyBytes))
 			// Check status code for API-level errors
 			if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
+				// Put error details into the Content field so MCP clients can access them
+				errText := fmt.Sprintf("Tool '%s' API call failed with status %s: %s", params.ToolName, httpResp.Status, string(bodyBytes))
 				resultPayload = ToolResultPayload{
 					IsError: true,
-					Error: &MCPError{
-						Code:    httpResp.StatusCode,
-						Message: fmt.Sprintf("Tool '%s' API call failed with status %s", params.ToolName, httpResp.Status),
-						Data:    string(bodyBytes), // Include response body in error data
-					},
+					Content: []ToolResultContent{{
+						Type: "text",
+						Text: errText,
+					}},
 					ToolCallID: fmt.Sprintf("%v", req.ID),
 				}
 			} else {

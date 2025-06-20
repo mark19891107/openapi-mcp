@@ -192,8 +192,9 @@ func TestHttpMethodPostHandler(t *testing.T) {
 				resultPayload, ok := resp.Result.(ToolResultPayload)
 				require.True(t, ok)
 				assert.True(t, resultPayload.IsError)
-				require.NotNil(t, resultPayload.Error)
-				assert.Contains(t, resultPayload.Error.Message, "operation details for tool 'nonexistent_tool' not found")
+				require.Len(t, resultPayload.Content, 1)
+				assert.Contains(t, resultPayload.Content[0].Text, "operation details for tool 'nonexistent_tool' not found")
+				assert.Nil(t, resultPayload.Error)
 			},
 		},
 		{

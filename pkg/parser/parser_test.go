@@ -396,6 +396,31 @@ const fileV2SpecJSON = `{
   }
 }`
 
+// Minimal WSDL
+const minimalWSDL = `<definitions xmlns="http://schemas.xmlsoap.org/wsdl/" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:tns="http://example.com/" targetNamespace="http://example.com/">
+  <message name="AddRequest">
+    <part name="a" type="xsd:int"/>
+    <part name="b" type="xsd:int"/>
+  </message>
+  <portType name="CalcPort">
+    <operation name="Add">
+      <input message="tns:AddRequest"/>
+    </operation>
+  </portType>
+  <binding name="CalcBinding" type="tns:CalcPort">
+    <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <operation name="Add">
+      <soap:operation soapAction="urn:add"/>
+      <input><soap:body use="literal"/></input>
+    </operation>
+  </binding>
+  <service name="CalcService">
+    <port name="CalcPort" binding="tns:CalcBinding">
+      <soap:address location="http://example.com/calc"/>
+    </port>
+  </service>
+</definitions>`
+
 func TestLoadSwagger(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -422,11 +447,18 @@ func TestLoadSwagger(t *testing.T) {
 			expectVersion: VersionV2,
 		},
 		{
+			name:          "Valid WSDL file",
+			content:       minimalWSDL,
+			fileName:      "service.wsdl",
+			expectError:   false,
+			expectVersion: VersionWSDL,
+		},
+		{
 			name:          "Malformed JSON file",
 			content:       malformedJSON,
 			fileName:      "malformed.json",
 			expectError:   true,
-			containsError: "failed to parse JSON",
+			containsError: "failed to detect OpenAPI/Swagger version",
 		},
 		{
 			name:          "No version key JSON file",
@@ -469,7 +501,7 @@ func TestLoadSwagger(t *testing.T) {
 			name:          "Malformed JSON URL",
 			content:       malformedJSON,
 			expectError:   true,
-			containsError: "failed to parse JSON",
+			containsError: "failed to detect OpenAPI/Swagger version",
 			isURLTest:     true,
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)

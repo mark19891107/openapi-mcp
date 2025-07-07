@@ -15,6 +15,8 @@ type OperationDetail struct {
 	Path       string            `json:"path"` // Path template (e.g., /users/{id})
 	BaseURL    string            `json:"baseUrl"`
 	Parameters []ParameterDetail `json:"parameters,omitempty"`
+	SOAPAction string            `json:"soapAction,omitempty"`
+	IsSOAP     bool              `json:"isSoap,omitempty"`
 	// Add RequestBody schema if needed
 }
 

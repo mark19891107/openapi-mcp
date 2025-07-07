@@ -7,9 +7,9 @@
 
 ![openapi-mcp logo](openapi-mcp.png)
 
-**Generate MCP tool definitions directly from a Swagger/OpenAPI specification file.**
+**Generate MCP tool definitions directly from a Swagger/OpenAPI or WSDL specification file.**
 
-OpenAPI-MCP is a dockerized MCP server that reads a `swagger.json` or `openapi.yaml` file and generates a corresponding [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction) toolset. This allows MCP-compatible clients like [Cursor](https://cursor.sh/) to interact with APIs described by standard OpenAPI specifications. Now you can enable your AI agent to access any API by simply providing its OpenAPI/Swagger specification - no additional coding required.
+OpenAPI-MCP is a dockerized MCP server that reads a `swagger.json`, `openapi.yaml`, or `.wsdl` file and generates a corresponding [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction) toolset. This allows MCP-compatible clients like [Cursor](https://cursor.sh/) to interact with APIs described by standard OpenAPI specifications or SOAP services.
 
 ## Table of Contents
 
@@ -38,7 +38,8 @@ Run the demo yourself: [Running the Weatherbit Example (Step-by-Step)](#running-
 
 ## Features
 
--   **OpenAPI v2 (Swagger) & v3 Support:** Parses standard specification formats.
+ -   **OpenAPI v2 (Swagger) & v3 Support:** Parses standard specification formats.
+ -   **WSDL Support:** Basic conversion of SOAP WSDL operations into MCP tools.
 -   **Schema Generation:** Creates MCP tool schemas from OpenAPI operation parameters and request/response definitions.
 -   **Secure API Key Management:**
     -   Injects API keys into requests (`header`, `query`, `path`, `cookie`) based on command-line configuration.

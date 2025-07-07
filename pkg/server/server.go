@@ -18,6 +18,7 @@ import (
 
 	"github.com/ckanthony/openapi-mcp/pkg/config"
 	"github.com/ckanthony/openapi-mcp/pkg/mcp"
+	"github.com/ckanthony/openapi-mcp/pkg/wsdl"
 	"github.com/google/uuid" // Import UUID package
 )
 
@@ -568,7 +569,10 @@ func executeToolCall(params *ToolCallParams, toolSet *mcp.ToolSet, cfg *config.C
 		cookieParams = append(cookieParams, clientCookies...)
 	}
 	bodyData := make(map[string]interface{}) // For building the request body
-	requestBodyRequired := operation.Method == "POST" || operation.Method == "PUT" || operation.Method == "PATCH"
+	requestBodyRequired := operation.Method == http.MethodPost || operation.Method == http.MethodPut || operation.Method == http.MethodPatch
+	if operation.IsSOAP {
+		requestBodyRequired = true
+	}
 
 	// Create a map of expected parameters from the operation details for easier lookup
 	expectedParams := make(map[string]string) // Map param name to its location ('in')
@@ -691,7 +695,12 @@ func executeToolCall(params *ToolCallParams, toolSet *mcp.ToolSet, cfg *config.C
 	// --- Prepare Request Body ---
 	var reqBody io.Reader
 	var bodyBytes []byte // Keep for logging
-	if requestBodyRequired && len(bodyData) > 0 {
+	if operation.IsSOAP {
+		envelope := wsdl.BuildSOAPEnvelope(params.ToolName, toolInput)
+		bodyBytes = []byte(envelope)
+		reqBody = bytes.NewBuffer(bodyBytes)
+		log.Printf("[ExecuteToolCall] SOAP Envelope: %s", envelope)
+	} else if requestBodyRequired && len(bodyData) > 0 {
 		var err error
 		bodyBytes, err = json.Marshal(bodyData)
 		if err != nil {
@@ -711,9 +720,17 @@ func executeToolCall(params *ToolCallParams, toolSet *mcp.ToolSet, cfg *config.C
 
 	// --- Set Headers ---
 	// Default headers
-	req.Header.Set("Accept", "application/json") // Assume JSON response typical for APIs
-	if reqBody != nil {
-		req.Header.Set("Content-Type", "application/json") // Assume JSON body if body exists
+	if operation.IsSOAP {
+		req.Header.Set("Accept", "text/xml")
+		req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+		if operation.SOAPAction != "" {
+			req.Header.Set("SOAPAction", operation.SOAPAction)
+		}
+	} else {
+		req.Header.Set("Accept", "application/json") // Assume JSON response typical for APIs
+		if reqBody != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
 	}
 
 	// Add headers collected from input/spec AND potentially injected API key

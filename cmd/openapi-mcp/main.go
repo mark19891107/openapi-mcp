@@ -29,7 +29,7 @@ func (i *stringSliceFlag) Set(value string) error {
 func main() {
 	// --- Flag Definitions First ---
 	// Define specPath early so we can use it for .env loading
-	specPath := flag.String("spec", "", "Path or URL to the OpenAPI specification file (required)")
+	specPath := flag.String("spec", "", "Path or URL to the OpenAPI or WSDL specification file (required)")
 	port := flag.Int("port", 8080, "Port to run the MCP server on")
 
 	apiKey := flag.String("api-key", "", "Direct API key value")
@@ -48,7 +48,7 @@ func main() {
 
 	serverBaseURL := flag.String("base-url", "", "Manually override the server base URL")
 	defaultToolName := flag.String("name", "OpenAPI-MCP Tools", "Default name for the toolset")
-	defaultToolDesc := flag.String("desc", "Tools generated from OpenAPI spec", "Default description for the toolset")
+	defaultToolDesc := flag.String("desc", "Tools generated from OpenAPI or WSDL spec", "Default description for the toolset")
 
 	// Parse flags *after* defining them all
 	flag.Parse()

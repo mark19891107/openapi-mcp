@@ -15,7 +15,8 @@ type OperationDetail struct {
 	Path       string            `json:"path"` // Path template (e.g., /users/{id})
 	BaseURL    string            `json:"baseUrl"`
 	Parameters []ParameterDetail `json:"parameters,omitempty"`
-	// Add RequestBody schema if needed
+	SOAPAction string            `json:"soapAction,omitempty"`
+	IsSOAP     bool              `json:"isSoap,omitempty"`
 }
 
 // ToolSet represents the collection of tools provided by an MCP server.

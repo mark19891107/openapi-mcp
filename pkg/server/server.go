@@ -568,7 +568,7 @@ func executeToolCall(params *ToolCallParams, toolSet *mcp.ToolSet, cfg *config.C
 		cookieParams = append(cookieParams, clientCookies...)
 	}
 	bodyData := make(map[string]interface{}) // For building the request body
-	requestBodyRequired := operation.Method == "POST" || operation.Method == "PUT" || operation.Method == "PATCH"
+	requestBodyRequired := operation.Method == "POST" || operation.Method == "PUT" || operation.Method == "PATCH" || operation.IsSOAP
 
 	// Create a map of expected parameters from the operation details for easier lookup
 	expectedParams := make(map[string]string) // Map param name to its location ('in')
@@ -691,15 +691,21 @@ func executeToolCall(params *ToolCallParams, toolSet *mcp.ToolSet, cfg *config.C
 	// --- Prepare Request Body ---
 	var reqBody io.Reader
 	var bodyBytes []byte // Keep for logging
-	if requestBodyRequired && len(bodyData) > 0 {
+	if requestBodyRequired {
 		var err error
-		bodyBytes, err = json.Marshal(bodyData)
-		if err != nil {
-			log.Printf("[ExecuteToolCall] Error marshalling request body: %v", err)
-			return nil, fmt.Errorf("error marshalling request body: %w", err)
+		if operation.IsSOAP {
+			bodyBytes, err = buildSOAPEnvelope(operation.Path, bodyData)
+		} else if len(bodyData) > 0 {
+			bodyBytes, err = json.Marshal(bodyData)
 		}
-		reqBody = bytes.NewBuffer(bodyBytes)
-		log.Printf("[ExecuteToolCall] Request body: %s", string(bodyBytes))
+		if err != nil {
+			log.Printf("[ExecuteToolCall] Error preparing request body: %v", err)
+			return nil, fmt.Errorf("error preparing request body: %w", err)
+		}
+		if len(bodyBytes) > 0 {
+			reqBody = bytes.NewBuffer(bodyBytes)
+			log.Printf("[ExecuteToolCall] Request body: %s", string(bodyBytes))
+		}
 	}
 
 	// --- Create HTTP Request ---
@@ -711,9 +717,17 @@ func executeToolCall(params *ToolCallParams, toolSet *mcp.ToolSet, cfg *config.C
 
 	// --- Set Headers ---
 	// Default headers
-	req.Header.Set("Accept", "application/json") // Assume JSON response typical for APIs
-	if reqBody != nil {
-		req.Header.Set("Content-Type", "application/json") // Assume JSON body if body exists
+	if operation.IsSOAP {
+		req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+		if operation.SOAPAction != "" {
+			req.Header.Set("SOAPAction", operation.SOAPAction)
+		}
+		req.Header.Set("Accept", "text/xml")
+	} else {
+		req.Header.Set("Accept", "application/json")
+		if reqBody != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
 	}
 
 	// Add headers collected from input/spec AND potentially injected API key
@@ -914,6 +928,23 @@ func getMethodFromResponse(resp jsonRPCResponse) string {
 		return "error"
 	}
 	return "unknown"
+}
+
+// buildSOAPEnvelope creates a simple SOAP envelope with the operation name and parameters.
+func buildSOAPEnvelope(operation string, params map[string]interface{}) ([]byte, error) {
+	var b strings.Builder
+	b.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
+	b.WriteString(`<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">`)
+	b.WriteString(`<soap:Body>`)
+	b.WriteString("<" + operation + ">")
+	for k, v := range params {
+		b.WriteString("<" + k + ">")
+		b.WriteString(fmt.Sprintf("%v", v))
+		b.WriteString("</" + k + ">")
+	}
+	b.WriteString("</" + operation + ">")
+	b.WriteString(`</soap:Body></soap:Envelope>`)
+	return []byte(b.String()), nil
 }
 
 // tryWriteHTTPError attempts to write an HTTP error, ignoring failures.

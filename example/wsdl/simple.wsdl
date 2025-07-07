@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:tns="http://example.com/" targetNamespace="http://example.com/">
+  <message name="GetRequest">
+    <part name="id" type="xsd:string" xmlns:xsd="http://www.w3.org/2001/XMLSchema"/>
+  </message>
+  <portType name="SimplePort">
+    <operation name="Get">
+      <input message="tns:GetRequest"/>
+    </operation>
+  </portType>
+  <binding name="SimpleBinding" type="tns:SimplePort">
+    <soap:binding transport="http://schemas.xmlsoap.org/soap/http"/>
+    <operation name="Get">
+      <soap:operation soapAction="http://example.com/Get"/>
+    </operation>
+  </binding>
+  <service name="SimpleService">
+    <port name="SimplePort" binding="tns:SimpleBinding">
+      <soap:address location="http://example.com/api"/>
+    </port>
+  </service>
+</definitions>

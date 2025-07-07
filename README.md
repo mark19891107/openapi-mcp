@@ -7,9 +7,9 @@
 
 ![openapi-mcp logo](openapi-mcp.png)
 
-**Generate MCP tool definitions directly from a Swagger/OpenAPI specification file.**
+**Generate MCP tool definitions directly from a Swagger/OpenAPI or WSDL specification file.**
 
-OpenAPI-MCP is a dockerized MCP server that reads a `swagger.json` or `openapi.yaml` file and generates a corresponding [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction) toolset. This allows MCP-compatible clients like [Cursor](https://cursor.sh/) to interact with APIs described by standard OpenAPI specifications. Now you can enable your AI agent to access any API by simply providing its OpenAPI/Swagger specification - no additional coding required.
+OpenAPI-MCP is a dockerized MCP server that reads a `swagger.json`, `openapi.yaml`, or `*.wsdl` file and generates a corresponding [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction) toolset. This allows MCP-compatible clients like [Cursor](https://cursor.sh/) to interact with APIs described by standard OpenAPI or SOAP specifications. Now you can enable your AI agent to access any API by simply providing its OpenAPI/Swagger or WSDL specification - no additional coding required.
 
 ## Table of Contents
 
@@ -38,7 +38,7 @@ Run the demo yourself: [Running the Weatherbit Example (Step-by-Step)](#running-
 
 ## Features
 
--   **OpenAPI v2 (Swagger) & v3 Support:** Parses standard specification formats.
+-   **OpenAPI v2 (Swagger), v3 & WSDL Support:** Parses standard specification formats.
 -   **Schema Generation:** Creates MCP tool schemas from OpenAPI operation parameters and request/response definitions.
 -   **Secure API Key Management:**
     -   Injects API keys into requests (`header`, `query`, `path`, `cookie`) based on command-line configuration.
@@ -79,7 +79,7 @@ Alternatively, you can use the pre-built image available on [Docker Hub](https:/
     You need to provide the OpenAPI specification and any necessary API key configuration when running the container.
 
     *   **Example 1: Using a local spec file and `.env` file:**
-        -   Create a directory (e.g., `./my-api`) containing your `openapi.json` or `swagger.yaml`.
+        -   Create a directory (e.g., `./my-api`) containing your `openapi.json`, `swagger.yaml`, or `service.wsdl`.
         -   If the API requires a key, create a `.env` file in the *same directory* (e.g., `./my-api/.env`) with `API_KEY=your_actual_key` (replace `API_KEY` if your `--api-key-env` flag is different).
         ```bash
         docker run -p 8080:8080 --rm \\
@@ -111,7 +111,7 @@ Alternatively, you can use the pre-built image available on [Docker Hub](https:/
         *   `--env-file <path_to_host_env_file>`: Load environment variables from a local file (for API keys, etc.). Path is on the host.
         *   `-e <VAR_NAME>="<value>"`: Pass a single environment variable directly.
         *   `openapi-mcp:latest`: The name of the image you built locally.
-        *   `--spec ...`: **Required.** Path to the spec file *inside the container* (e.g., `/app/spec/openapi.json`) or a public URL.
+        *   `--spec ...`: **Required.** Path to the spec file *inside the container* (e.g., `/app/spec/openapi.json` or `/app/spec/service.wsdl`) or a public URL.
         *   `--port 8080`: (Optional) Change the internal port the server listens on (must match the container port in `-p`).
         *   `--api-key-env`, `--api-key-name`, `--api-key-loc`: Required if the target API needs an API key.
         *   (See `--help` for all command-line options by running `docker run --rm openapi-mcp:latest --help`)
@@ -190,7 +190,7 @@ The `openapi-mcp` command accepts the following flags:
 
 | Flag                 | Description                                                                                                         | Type          | Default                          |
 |----------------------|---------------------------------------------------------------------------------------------------------------------|---------------|----------------------------------|
-| `--spec`             | **Required.** Path or URL to the OpenAPI specification file.                                                          | `string`      | (none)                           |
+| `--spec`             | **Required.** Path or URL to the OpenAPI or WSDL specification file.                                                          | `string`      | (none)                           |
 | `--port`             | Port to run the MCP server on.                                                                                      | `int`         | `8080`                           |
 | `--api-key`          | Direct API key value (use `--api-key-env` or `.env` file instead for security).                                       | `string`      | (none)                           |
 | `--api-key-env`      | Environment variable name containing the API key. If spec is local, also checks `.env` file in the spec's directory. | `string`      | (none)                           |

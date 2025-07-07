@@ -63,6 +63,30 @@ const minimalV2SpecJSON = `{
   }
 }`
 
+// Minimal WSDL document
+const minimalWSDL = `<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://schemas.xmlsoap.org/wsdl/" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:tns="http://example.com/" targetNamespace="http://example.com/">
+  <message name="GetRequest">
+    <part name="id" type="xsd:string" xmlns:xsd="http://www.w3.org/2001/XMLSchema"/>
+  </message>
+  <portType name="SimplePort">
+    <operation name="Get">
+      <input message="tns:GetRequest"/>
+    </operation>
+  </portType>
+  <binding name="SimpleBinding" type="tns:SimplePort">
+    <soap:binding transport="http://schemas.xmlsoap.org/soap/http"/>
+    <operation name="Get">
+      <soap:operation soapAction="http://example.com/Get"/>
+    </operation>
+  </binding>
+  <service name="SimpleService">
+    <port name="SimplePort" binding="tns:SimpleBinding">
+      <soap:address location="http://example.com/api"/>
+    </port>
+  </service>
+</definitions>`
+
 // Malformed JSON
 const malformedJSON = `{
   "openapi": "3.0.0",
@@ -426,14 +450,14 @@ func TestLoadSwagger(t *testing.T) {
 			content:       malformedJSON,
 			fileName:      "malformed.json",
 			expectError:   true,
-			containsError: "failed to parse JSON",
+			containsError: "failed to detect",
 		},
 		{
 			name:          "No version key JSON file",
 			content:       noVersionKeyJSON,
 			fileName:      "no_version.json",
 			expectError:   true,
-			containsError: "missing 'openapi' or 'swagger' key",
+			containsError: "failed to detect",
 		},
 		{
 			name:          "Non-existent file",
@@ -469,7 +493,7 @@ func TestLoadSwagger(t *testing.T) {
 			name:          "Malformed JSON URL",
 			content:       malformedJSON,
 			expectError:   true,
-			containsError: "failed to parse JSON",
+			containsError: "failed to detect",
 			isURLTest:     true,
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
@@ -480,7 +504,7 @@ func TestLoadSwagger(t *testing.T) {
 			name:          "No version key JSON URL",
 			content:       noVersionKeyJSON,
 			expectError:   true,
-			containsError: "missing 'openapi' or 'swagger' key",
+			containsError: "failed to detect",
 			isURLTest:     true,
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
@@ -1083,4 +1107,21 @@ func TestGenerateToolSet(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGenerateToolSetWSDL(t *testing.T) {
+	tmp := t.TempDir()
+	wsdlPath := filepath.Join(tmp, "test.wsdl")
+	err := os.WriteFile(wsdlPath, []byte(minimalWSDL), 0644)
+	require.NoError(t, err)
+
+	doc, version, err := LoadSwagger(wsdlPath)
+	require.NoError(t, err)
+	require.Equal(t, VersionWSDL, version)
+
+	ts, err := GenerateToolSet(doc, version, &config.Config{})
+	require.NoError(t, err)
+	require.NotNil(t, ts)
+	assert.Equal(t, 1, len(ts.Tools))
+	assert.Contains(t, ts.Operations, "Get")
 }

@@ -15,14 +15,16 @@ import (
 
 	"github.com/ckanthony/openapi-mcp/pkg/config"
 	"github.com/ckanthony/openapi-mcp/pkg/mcp"
+	"github.com/ckanthony/openapi-mcp/pkg/wsdl"
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/go-openapi/loads"
 	"github.com/go-openapi/spec"
 )
 
 const (
-	VersionV2 = "v2"
-	VersionV3 = "v3"
+	VersionV2   = "v2"
+	VersionV3   = "v3"
+	VersionWSDL = "wsdl"
 )
 
 // LoadSwagger detects the version and loads an OpenAPI/Swagger specification
@@ -66,48 +68,55 @@ func LoadSwagger(location string) (interface{}, string, error) {
 		}
 	}
 
-	// Detect version from data
+	// Attempt JSON detection first
 	var detector map[string]interface{}
-	if err := json.Unmarshal(data, &detector); err != nil {
-		return nil, "", fmt.Errorf("failed to parse JSON from '%s' for version detection: %w", location, err)
-	}
+	if err := json.Unmarshal(data, &detector); err == nil {
+		if _, ok := detector["openapi"]; ok {
+			// OpenAPI 3.x
+			loader := openapi3.NewLoader()
+			loader.IsExternalRefsAllowed = true
+			var doc *openapi3.T
+			var loadErr error
 
-	if _, ok := detector["openapi"]; ok {
-		// OpenAPI 3.x
-		loader := openapi3.NewLoader()
-		loader.IsExternalRefsAllowed = true
-		var doc *openapi3.T
-		var loadErr error
+			if !isURL {
+				log.Printf("Loading V3 spec using LoadFromFile: %s", absPath)
+				doc, loadErr = loader.LoadFromFile(absPath)
+			} else {
+				log.Printf("Loading V3 spec using LoadFromURI: %s", location)
+				doc, loadErr = loader.LoadFromURI(locationURL)
+			}
 
-		if !isURL {
-			// Use LoadFromFile for local files
-			log.Printf("Loading V3 spec using LoadFromFile: %s", absPath)
-			doc, loadErr = loader.LoadFromFile(absPath)
-		} else {
-			// Use LoadFromURI for URLs
-			log.Printf("Loading V3 spec using LoadFromURI: %s", location)
-			doc, loadErr = loader.LoadFromURI(locationURL)
-		}
+			if loadErr != nil {
+				return nil, "", fmt.Errorf("failed to load OpenAPI v3 spec from '%s': %w", location, loadErr)
+			}
 
-		if loadErr != nil {
-			return nil, "", fmt.Errorf("failed to load OpenAPI v3 spec from '%s': %w", location, loadErr)
+			if err := doc.Validate(context.Background()); err != nil {
+				return nil, "", fmt.Errorf("OpenAPI v3 spec validation failed for '%s': %w", location, err)
+			}
+			return doc, VersionV3, nil
+		} else if _, ok := detector["swagger"]; ok {
+			// Swagger 2.0
+			log.Printf("Loading V2 spec using loads.Analyzed from data (source: %s)", location)
+			doc, err := loads.Analyzed(data, "2.0")
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to load or validate Swagger v2 spec from '%s': %w", location, err)
+			}
+			return doc.Spec(), VersionV2, nil
 		}
-
-		if err := doc.Validate(context.Background()); err != nil {
-			return nil, "", fmt.Errorf("OpenAPI v3 spec validation failed for '%s': %w", location, err)
-		}
-		return doc, VersionV3, nil
-	} else if _, ok := detector["swagger"]; ok {
-		// Swagger 2.0 - Still load from data as loads.Analyzed expects bytes
-		log.Printf("Loading V2 spec using loads.Analyzed from data (source: %s)", location)
-		doc, err := loads.Analyzed(data, "2.0")
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to load or validate Swagger v2 spec from '%s': %w", location, err)
-		}
-		return doc.Spec(), VersionV2, nil
 	} else {
-		return nil, "", fmt.Errorf("failed to detect OpenAPI/Swagger version in '%s': missing 'openapi' or 'swagger' key", location)
+		log.Printf("JSON unmarshal failed, attempting WSDL detection: %v", err)
 	}
+
+	// Try WSDL detection
+	if strings.Contains(string(data), "definitions") {
+		wsdlDoc, werr := wsdl.ParseWSDL(data)
+		if werr == nil {
+			return wsdlDoc, VersionWSDL, nil
+		}
+		log.Printf("WSDL parse attempt failed: %v", werr)
+	}
+
+	return nil, "", fmt.Errorf("failed to detect OpenAPI/Swagger/WSDL specification type in '%s'", location)
 }
 
 // GenerateToolSet converts a loaded spec (v2 or v3) into an MCP ToolSet.
@@ -125,6 +134,12 @@ func GenerateToolSet(specDoc interface{}, version string, cfg *config.Config) (*
 			return nil, fmt.Errorf("internal error: expected *spec.Swagger for v2 spec, got %T", specDoc)
 		}
 		return generateToolSetV2(docV2, cfg)
+	case VersionWSDL:
+		wsdlDoc, ok := specDoc.(*wsdl.Definitions)
+		if !ok {
+			return nil, fmt.Errorf("internal error: expected *wsdl.Definitions for WSDL spec, got %T", specDoc)
+		}
+		return generateToolSetWSDL(wsdlDoc, cfg)
 	default:
 		return nil, fmt.Errorf("unsupported specification version: %s", version)
 	}
@@ -951,6 +966,62 @@ func shouldInclude(opID string, opTags []string, cfg *config.Config) bool {
 		}
 	}
 	return false // Did not match any inclusion rule
+}
+
+// generateToolSetWSDL converts a WSDL definition into an MCP ToolSet.
+func generateToolSetWSDL(doc *wsdl.Definitions, cfg *config.Config) (*mcp.ToolSet, error) {
+	toolSet := createBaseToolSet("WSDL Service", "", cfg)
+	toolSet.Operations = make(map[string]mcp.OperationDetail)
+
+	baseURL := ""
+	if len(doc.Services) > 0 && len(doc.Services[0].Ports) > 0 {
+		baseURL = strings.TrimSuffix(doc.Services[0].Ports[0].Address.Location, "/")
+	}
+
+	messageMap := make(map[string]wsdl.Message)
+	for _, m := range doc.Messages {
+		messageMap[m.Name] = m
+	}
+
+	for _, pt := range doc.PortTypes {
+		for _, op := range pt.Operations {
+			msgName := strings.TrimPrefix(op.Input.Message, "tns:")
+			msg := messageMap[msgName]
+			schema := mcp.Schema{Type: "object", Properties: map[string]mcp.Schema{}}
+			for _, part := range msg.Parts {
+				schema.Properties[part.Name] = mcp.Schema{Type: "string"}
+				schema.Required = append(schema.Required, part.Name)
+			}
+
+			tool := mcp.Tool{Name: op.Name, Description: "", InputSchema: schema}
+			toolSet.Tools = append(toolSet.Tools, tool)
+
+			soapAction := findSOAPAction(doc.Bindings, pt.Name, op.Name)
+
+			toolSet.Operations[op.Name] = mcp.OperationDetail{
+				Method:     "POST",
+				Path:       "/",
+				BaseURL:    baseURL,
+				SOAPAction: soapAction,
+				IsSOAP:     true,
+			}
+		}
+	}
+
+	return toolSet, nil
+}
+
+func findSOAPAction(bindings []wsdl.Binding, portTypeName, opName string) string {
+	for _, b := range bindings {
+		if strings.HasSuffix(b.Type, portTypeName) {
+			for _, bo := range b.Operations {
+				if bo.Name == opName {
+					return bo.SOAPOp.SOAPAction
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // mapJSONSchemaType ensures the type is one recognized by JSON Schema / MCP.

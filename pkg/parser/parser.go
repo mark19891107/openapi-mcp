@@ -3,6 +3,7 @@ package parser
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"log"
@@ -15,14 +16,16 @@ import (
 
 	"github.com/ckanthony/openapi-mcp/pkg/config"
 	"github.com/ckanthony/openapi-mcp/pkg/mcp"
+	"github.com/ckanthony/openapi-mcp/pkg/wsdl"
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/go-openapi/loads"
 	"github.com/go-openapi/spec"
 )
 
 const (
-	VersionV2 = "v2"
-	VersionV3 = "v3"
+	VersionV2   = "v2"
+	VersionV3   = "v3"
+	VersionWSDL = "wsdl"
 )
 
 // LoadSwagger detects the version and loads an OpenAPI/Swagger specification
@@ -69,6 +72,15 @@ func LoadSwagger(location string) (interface{}, string, error) {
 	// Detect version from data
 	var detector map[string]interface{}
 	if err := json.Unmarshal(data, &detector); err != nil {
+		// Attempt XML detection for WSDL
+		var root struct{ XMLName xml.Name }
+		if xmlErr := xml.Unmarshal(data, &root); xmlErr == nil && strings.Contains(strings.ToLower(root.XMLName.Local), "definitions") {
+			defs, err := wsdl.Parse(data)
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to parse WSDL from '%s': %w", location, err)
+			}
+			return defs, VersionWSDL, nil
+		}
 		return nil, "", fmt.Errorf("failed to parse JSON from '%s' for version detection: %w", location, err)
 	}
 
@@ -125,6 +137,12 @@ func GenerateToolSet(specDoc interface{}, version string, cfg *config.Config) (*
 			return nil, fmt.Errorf("internal error: expected *spec.Swagger for v2 spec, got %T", specDoc)
 		}
 		return generateToolSetV2(docV2, cfg)
+	case VersionWSDL:
+		defs, ok := specDoc.(*wsdl.Definitions)
+		if !ok {
+			return nil, fmt.Errorf("internal error: expected *wsdl.Definitions for wsdl spec, got %T", specDoc)
+		}
+		return generateToolSetWSDL(defs, cfg)
 	default:
 		return nil, fmt.Errorf("unsupported specification version: %s", version)
 	}
@@ -975,4 +993,65 @@ func sliceContains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// --- WSDL Support ---
+
+func generateToolSetWSDL(defs *wsdl.Definitions, cfg *config.Config) (*mcp.ToolSet, error) {
+	name := "WSDL Service"
+	if len(defs.Services) > 0 {
+		name = defs.Services[0].Name
+	}
+	toolSet := createBaseToolSet(name, "", cfg)
+	toolSet.Operations = make(map[string]mcp.OperationDetail)
+
+	baseURL := ""
+	path := ""
+	if len(defs.Services) > 0 && len(defs.Services[0].Ports) > 0 {
+		addr := defs.Services[0].Ports[0].Address.Location
+		if u, err := url.Parse(addr); err == nil {
+			baseURL = u.Scheme + "://" + u.Host
+			path = u.Path
+		}
+	}
+
+	msgMap := make(map[string]wsdl.Message)
+	for _, m := range defs.Messages {
+		msgMap[m.Name] = m
+	}
+
+	actionMap := make(map[string]string)
+	for _, b := range defs.Bindings {
+		for _, op := range b.Operations {
+			actionMap[op.Name] = op.Action.SOAPAction
+		}
+	}
+
+	for _, pt := range defs.PortTypes {
+		for _, op := range pt.Operations {
+			inMsgName := strings.TrimPrefix(op.Input.Message, "tns:")
+			msg, ok := msgMap[inMsgName]
+			schema := mcp.Schema{Type: "object", Properties: map[string]mcp.Schema{}}
+			params := []mcp.ParameterDetail{}
+			if ok {
+				for _, part := range msg.Parts {
+					schema.Properties[part.Name] = mcp.Schema{Type: "string"}
+					params = append(params, mcp.ParameterDetail{Name: part.Name, In: "body"})
+				}
+			}
+			tool := mcp.Tool{Name: op.Name, Description: "", InputSchema: schema}
+			toolSet.Tools = append(toolSet.Tools, tool)
+			toolSet.Operations[op.Name] = mcp.OperationDetail{
+				Method:        http.MethodPost,
+				Path:          path,
+				BaseURL:       baseURL,
+				Parameters:    params,
+				SOAPAction:    actionMap[op.Name],
+				SOAPNamespace: defs.TargetNamespace,
+				IsSOAP:        true,
+			}
+		}
+	}
+
+	return toolSet, nil
 }

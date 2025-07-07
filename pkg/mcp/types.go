@@ -11,10 +11,13 @@ type ParameterDetail struct {
 
 // OperationDetail holds the necessary information to execute a specific API operation.
 type OperationDetail struct {
-	Method     string            `json:"method"`
-	Path       string            `json:"path"` // Path template (e.g., /users/{id})
-	BaseURL    string            `json:"baseUrl"`
-	Parameters []ParameterDetail `json:"parameters,omitempty"`
+	Method        string            `json:"method"`
+	Path          string            `json:"path"` // Path template (e.g., /users/{id})
+	BaseURL       string            `json:"baseUrl"`
+	Parameters    []ParameterDetail `json:"parameters,omitempty"`
+	SOAPAction    string            `json:"soapAction,omitempty"`
+	IsSOAP        bool              `json:"isSoap,omitempty"`
+	SOAPNamespace string            `json:"soapNamespace,omitempty"`
 	// Add RequestBody schema if needed
 }
 

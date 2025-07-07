@@ -691,7 +691,10 @@ func executeToolCall(params *ToolCallParams, toolSet *mcp.ToolSet, cfg *config.C
 	// --- Prepare Request Body ---
 	var reqBody io.Reader
 	var bodyBytes []byte // Keep for logging
-	if requestBodyRequired && len(bodyData) > 0 {
+	if operation.IsSOAP {
+		bodyBytes = buildSOAPEnvelope(toolName, operation.SOAPNamespace, bodyData)
+		reqBody = bytes.NewBuffer(bodyBytes)
+	} else if requestBodyRequired && len(bodyData) > 0 {
 		var err error
 		bodyBytes, err = json.Marshal(bodyData)
 		if err != nil {
@@ -711,9 +714,17 @@ func executeToolCall(params *ToolCallParams, toolSet *mcp.ToolSet, cfg *config.C
 
 	// --- Set Headers ---
 	// Default headers
-	req.Header.Set("Accept", "application/json") // Assume JSON response typical for APIs
-	if reqBody != nil {
-		req.Header.Set("Content-Type", "application/json") // Assume JSON body if body exists
+	if operation.IsSOAP {
+		req.Header.Set("Accept", "text/xml")
+		req.Header.Set("Content-Type", "text/xml; charset=utf-8")
+		if operation.SOAPAction != "" {
+			req.Header.Set("SOAPAction", operation.SOAPAction)
+		}
+	} else {
+		req.Header.Set("Accept", "application/json")
+		if reqBody != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
 	}
 
 	// Add headers collected from input/spec AND potentially injected API key
@@ -922,4 +933,20 @@ func tryWriteHTTPError(w http.ResponseWriter, code int, message string) {
 		log.Printf("Error writing plain HTTP error response: %v", err)
 	}
 	log.Printf("Sent plain HTTP error: %s (Code: %d)", message, code)
+}
+
+// buildSOAPEnvelope constructs a simple SOAP 1.1 envelope for the given
+// operation and parameters.
+func buildSOAPEnvelope(opName, namespace string, params map[string]interface{}) []byte {
+	var b strings.Builder
+	b.WriteString("<?xml version=\"1.0\" encoding=\"utf-8\"?>")
+	b.WriteString("<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">")
+	b.WriteString("<soap:Body>")
+	b.WriteString(fmt.Sprintf("<%s xmlns=\"%s\">", opName, namespace))
+	for k, v := range params {
+		b.WriteString("<" + k + ">" + fmt.Sprintf("%v", v) + "</" + k + ">")
+	}
+	b.WriteString("</" + opName + ">")
+	b.WriteString("</soap:Body></soap:Envelope>")
+	return []byte(b.String())
 }

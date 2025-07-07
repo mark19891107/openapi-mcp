@@ -29,7 +29,7 @@ func (i *stringSliceFlag) Set(value string) error {
 func main() {
 	// --- Flag Definitions First ---
 	// Define specPath early so we can use it for .env loading
-	specPath := flag.String("spec", "", "Path or URL to the OpenAPI specification file (required)")
+	specPath := flag.String("spec", "", "Path or URL to the OpenAPI or WSDL specification file (required)")
 	port := flag.Int("port", 8080, "Port to run the MCP server on")
 
 	apiKey := flag.String("api-key", "", "Direct API key value")
@@ -126,7 +126,7 @@ func main() {
 	// --- Call Parser ---
 	specDoc, version, err := parser.LoadSwagger(cfg.SpecPath)
 	if err != nil {
-		log.Fatalf("Failed to load OpenAPI/Swagger spec: %v", err)
+		log.Fatalf("Failed to load specification: %v", err)
 	}
 	log.Printf("Spec type %s loaded successfully from %s.\n", version, cfg.SpecPath)
 

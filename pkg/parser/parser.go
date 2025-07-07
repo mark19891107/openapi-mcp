@@ -15,14 +15,17 @@ import (
 
 	"github.com/ckanthony/openapi-mcp/pkg/config"
 	"github.com/ckanthony/openapi-mcp/pkg/mcp"
+	"github.com/ckanthony/openapi-mcp/pkg/wsdl"
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/go-openapi/loads"
 	"github.com/go-openapi/spec"
+	gowsdl "github.com/hooklift/gowsdl"
 )
 
 const (
-	VersionV2 = "v2"
-	VersionV3 = "v3"
+	VersionV2   = "v2"
+	VersionV3   = "v3"
+	VersionWSDL = "wsdl"
 )
 
 // LoadSwagger detects the version and loads an OpenAPI/Swagger specification
@@ -66,48 +69,56 @@ func LoadSwagger(location string) (interface{}, string, error) {
 		}
 	}
 
-	// Detect version from data
+	// Attempt JSON detection first
 	var detector map[string]interface{}
-	if err := json.Unmarshal(data, &detector); err != nil {
-		return nil, "", fmt.Errorf("failed to parse JSON from '%s' for version detection: %w", location, err)
+	if err := json.Unmarshal(data, &detector); err == nil {
+		if _, ok := detector["openapi"]; ok {
+			// OpenAPI 3.x
+			loader := openapi3.NewLoader()
+			loader.IsExternalRefsAllowed = true
+			var doc *openapi3.T
+			var loadErr error
+
+			if !isURL {
+				// Use LoadFromFile for local files
+				log.Printf("Loading V3 spec using LoadFromFile: %s", absPath)
+				doc, loadErr = loader.LoadFromFile(absPath)
+			} else {
+				// Use LoadFromURI for URLs
+				log.Printf("Loading V3 spec using LoadFromURI: %s", location)
+				doc, loadErr = loader.LoadFromURI(locationURL)
+			}
+
+			if loadErr != nil {
+				return nil, "", fmt.Errorf("failed to load OpenAPI v3 spec from '%s': %w", location, loadErr)
+			}
+
+			if err := doc.Validate(context.Background()); err != nil {
+				return nil, "", fmt.Errorf("OpenAPI v3 spec validation failed for '%s': %w", location, err)
+			}
+			return doc, VersionV3, nil
+		} else if _, ok := detector["swagger"]; ok {
+			// Swagger 2.0 - Still load from data as loads.Analyzed expects bytes
+			log.Printf("Loading V2 spec using loads.Analyzed from data (source: %s)", location)
+			doc, err := loads.Analyzed(data, "2.0")
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to load or validate Swagger v2 spec from '%s': %w", location, err)
+			}
+			return doc.Spec(), VersionV2, nil
+		}
 	}
 
-	if _, ok := detector["openapi"]; ok {
-		// OpenAPI 3.x
-		loader := openapi3.NewLoader()
-		loader.IsExternalRefsAllowed = true
-		var doc *openapi3.T
-		var loadErr error
-
-		if !isURL {
-			// Use LoadFromFile for local files
-			log.Printf("Loading V3 spec using LoadFromFile: %s", absPath)
-			doc, loadErr = loader.LoadFromFile(absPath)
-		} else {
-			// Use LoadFromURI for URLs
-			log.Printf("Loading V3 spec using LoadFromURI: %s", location)
-			doc, loadErr = loader.LoadFromURI(locationURL)
-		}
-
-		if loadErr != nil {
-			return nil, "", fmt.Errorf("failed to load OpenAPI v3 spec from '%s': %w", location, loadErr)
-		}
-
-		if err := doc.Validate(context.Background()); err != nil {
-			return nil, "", fmt.Errorf("OpenAPI v3 spec validation failed for '%s': %w", location, err)
-		}
-		return doc, VersionV3, nil
-	} else if _, ok := detector["swagger"]; ok {
-		// Swagger 2.0 - Still load from data as loads.Analyzed expects bytes
-		log.Printf("Loading V2 spec using loads.Analyzed from data (source: %s)", location)
-		doc, err := loads.Analyzed(data, "2.0")
+	// If JSON detection fails, attempt WSDL (XML)
+	trimmed := strings.TrimSpace(string(data))
+	if strings.HasPrefix(trimmed, "<") {
+		wsdlDoc, err := wsdl.LoadWSDL(location)
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to load or validate Swagger v2 spec from '%s': %w", location, err)
+			return nil, "", fmt.Errorf("failed to load WSDL spec from '%s': %w", location, err)
 		}
-		return doc.Spec(), VersionV2, nil
-	} else {
-		return nil, "", fmt.Errorf("failed to detect OpenAPI/Swagger version in '%s': missing 'openapi' or 'swagger' key", location)
+		return wsdlDoc, VersionWSDL, nil
 	}
+
+	return nil, "", fmt.Errorf("failed to detect OpenAPI/Swagger version in '%s': missing 'openapi' or 'swagger' key", location)
 }
 
 // GenerateToolSet converts a loaded spec (v2 or v3) into an MCP ToolSet.
@@ -125,6 +136,12 @@ func GenerateToolSet(specDoc interface{}, version string, cfg *config.Config) (*
 			return nil, fmt.Errorf("internal error: expected *spec.Swagger for v2 spec, got %T", specDoc)
 		}
 		return generateToolSetV2(docV2, cfg)
+	case VersionWSDL:
+		docWSDL, ok := specDoc.(*gowsdl.WSDL)
+		if !ok {
+			return nil, fmt.Errorf("internal error: expected *gowsdl.WSDL for wsdl spec, got %T", specDoc)
+		}
+		return generateToolSetWSDL(docWSDL, cfg)
 	default:
 		return nil, fmt.Errorf("unsupported specification version: %s", version)
 	}
@@ -548,6 +565,73 @@ func generateToolSetV2(doc *spec.Swagger, cfg *config.Config) (*mcp.ToolSet, err
 	}
 
 	return toolSet, nil
+}
+
+func generateToolSetWSDL(doc *gowsdl.WSDL, cfg *config.Config) (*mcp.ToolSet, error) {
+	toolSet := createBaseToolSet(doc.Name, doc.Doc, cfg)
+	toolSet.Operations = make(map[string]mcp.OperationDetail)
+
+	baseURL := ""
+	path := ""
+	if len(doc.Service) > 0 && len(doc.Service[0].Ports) > 0 {
+		addr := doc.Service[0].Ports[0].SOAPAddress.Location
+		if u, err := url.Parse(addr); err == nil {
+			baseURL = u.Scheme + "://" + u.Host
+			path = u.Path
+		} else {
+			baseURL = strings.TrimSuffix(addr, "/")
+		}
+	}
+
+	msgMap := make(map[string]*gowsdl.WSDLMessage)
+	for _, m := range doc.Messages {
+		msgMap[m.Name] = m
+	}
+
+	namespace := doc.TargetNamespace
+
+	for _, pt := range doc.PortTypes {
+		for _, op := range pt.Operations {
+			toolName := op.Name
+			toolDesc := op.Doc
+
+			msgName := stripNamespace(op.Input.Message)
+			msg := msgMap[msgName]
+			inputSchema := mcp.Schema{Type: "object", Properties: map[string]mcp.Schema{}}
+			params := []mcp.ParameterDetail{}
+			if msg != nil {
+				for _, p := range msg.Parts {
+					inputSchema.Properties[p.Name] = mcp.Schema{Type: "string"}
+					params = append(params, mcp.ParameterDetail{Name: p.Name, In: "body"})
+				}
+			}
+
+			toolSet.Tools = append(toolSet.Tools, mcp.Tool{
+				Name:        toolName,
+				Description: toolDesc,
+				InputSchema: inputSchema,
+			})
+
+			toolSet.Operations[toolName] = mcp.OperationDetail{
+				Method:     "POST",
+				Path:       path,
+				BaseURL:    baseURL,
+				Parameters: params,
+				SOAPAction: op.SOAPOperation.SOAPAction,
+				IsSOAP:     true,
+				Namespace:  namespace,
+			}
+		}
+	}
+
+	return toolSet, nil
+}
+
+func stripNamespace(name string) string {
+	if idx := strings.Index(name, ":"); idx != -1 {
+		return name[idx+1:]
+	}
+	return name
 }
 
 func determineBaseURLV2(doc *spec.Swagger, cfg *config.Config) (string, error) {
